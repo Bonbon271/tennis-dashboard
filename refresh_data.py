@@ -8,27 +8,30 @@ nie ruszajac reszty pliku (CSS, JS, uklad strony).
 Uzycie:
     python3 refresh_data.py
 
-Wymaga pliku szablonu 'tennis_stats_dashboard.html' w tym samym katalogu
+Wymaga pliku szablonu 'index.html' w tym samym katalogu
 (czyli obecnej wersji dashboardu) - skrypt go nadpisuje swiezymi danymi.
 
-Zrodlo danych: Tennismylife/TML-Database (fork/nastepca projektu
-Jeffa Sackmanna, ten sam format kolumn). UWAGA LICENCYJNA: dane pierwotnie
-pochodza z projektu non-commercial - przed uzyciem produkcyjnym/komercyjnym
-sprawdz aktualna licencje repo i regulamin ATP dot. redystrybucji danych.
+Zrodlo danych: stats.tennismylife.org (oficjalna, na biezaco aktualizowana
+strona projektu TennisMyLife - NIE ich repo na GitHubie, ktore autorzy sami
+oznaczyli jako archiwalne/nieaktualizowane, przez co pomijalo m.in. caly
+Wimbledon 2026). Format kolumn identyczny jak w projekcie Jeffa Sackmanna.
+UWAGA LICENCYJNA: strona deklaruje licencje MIT, ale wczesniejsze repo
+GitHub tego samego projektu deklarowalo CC BY-NC-SA (non-commercial) -
+przed uzyciem komercyjnym warto to wyjasnic bezposrednio z autorami
+(kontakt: infotennismylife@gmail.com).
 """
 
 import io
 import json
 import math
 import re
-import tarfile
 import urllib.request
 
 import pandas as pd
 
 TEMPLATE_FILE = "index.html"
 OUTPUT_FILE = "index.html"
-REPO_TARBALL_URL = "https://codeload.github.com/Tennismylife/TML-Database/tar.gz/refs/heads/master"
+DATA_BASE_URL = "https://stats.tennismylife.org/data/{year}.csv"
 YEARS_HISTORICAL = [2023, 2024, 2025]  # traktowane jako jeden bucket "2023-2025"
 YEAR_CURRENT = 2026                      # osobny bucket (aktualny sezon)
 
@@ -37,26 +40,21 @@ YEAR_CURRENT = 2026                      # osobny bucket (aktualny sezon)
 # 1. POBRANIE DANYCH
 # ----------------------------------------------------------------------
 def download_years(years):
-    print(f"Pobieram archiwum repozytorium dla lat: {years} ...")
-    with urllib.request.urlopen(REPO_TARBALL_URL) as resp:
-        raw_bytes = resp.read()
-
     frames = []
-    with tarfile.open(fileobj=io.BytesIO(raw_bytes), mode="r:gz") as tar:
-        for year in years:
-            member_name = None
-            for member in tar.getmembers():
-                if member.name.endswith(f"/{year}.csv"):
-                    member_name = member.name
-                    break
-            if member_name is None:
-                print(f"  UWAGA: brak pliku dla roku {year}, pomijam.")
-                continue
-            f = tar.extractfile(member_name)
-            df = pd.read_csv(f, low_memory=False)
-            df["season"] = year
-            frames.append(df)
-            print(f"  Wczytano {year}.csv: {len(df)} meczow")
+    for year in years:
+        url = DATA_BASE_URL.format(year=year)
+        print(f"Pobieram {url} ...")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req) as resp:
+                raw_bytes = resp.read()
+        except Exception as e:
+            print(f"  UWAGA: nie udalo sie pobrac {year}.csv ({e}), pomijam.")
+            continue
+        df = pd.read_csv(io.BytesIO(raw_bytes), low_memory=False)
+        df["season"] = year
+        frames.append(df)
+        print(f"  Wczytano {year}.csv: {len(df)} meczow")
 
     return pd.concat(frames, ignore_index=True)
 
