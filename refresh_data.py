@@ -26,8 +26,8 @@ import urllib.request
 
 import pandas as pd
 
-TEMPLATE_FILE = "tennis_stats_dashboard.html"
-OUTPUT_FILE = "tennis_stats_dashboard.html"
+TEMPLATE_FILE = "index.html"
+OUTPUT_FILE = "index.html"
 REPO_TARBALL_URL = "https://codeload.github.com/Tennismylife/TML-Database/tar.gz/refs/heads/master"
 YEARS_HISTORICAL = [2023, 2024, 2025]  # traktowane jako jeden bucket "2023-2025"
 YEAR_CURRENT = 2026                      # osobny bucket (aktualny sezon)
