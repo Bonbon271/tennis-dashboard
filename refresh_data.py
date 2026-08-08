@@ -1,10 +1,9 @@
 """
 refresh_data.py
 ================
-Pobiera swieze dane meczowe ATP (2023-2026) oraz trwajace turnieje
-(ongoing_tourneys.csv) i podmienia 4 bloki danych osadzone w pliku dashboardu
-(ACE_DATA, H2H_DATA, EXTRA_STATS, MATCH_ACES_STATS), nie ruszajac reszty
-pliku (CSS, JS, uklad strony).
+Pobiera swieze dane meczowe ATP (2023-2026) i podmienia 4 bloki danych
+osadzone w pliku dashboardu (ACE_DATA, H2H_DATA, EXTRA_STATS, MATCH_ACES_STATS),
+nie ruszajac reszty pliku (CSS, JS, uklad strony).
 
 Uzycie:
     python3 refresh_data.py
@@ -33,18 +32,15 @@ import pandas as pd
 TEMPLATE_FILE = "index.html"
 OUTPUT_FILE = "index.html"
 DATA_BASE_URL = "https://stats.tennismylife.org/data/{year}.csv"
-ONGOING_URL = "https://stats.tennismylife.org/data/ongoing_tourneys.csv"
 YEARS_HISTORICAL = [2023, 2024, 2025]  # traktowane jako jeden bucket "2023-2025"
-YEAR_CURRENT = 2026                    # osobny bucket (aktualny sezon)
+YEAR_CURRENT = 2026                      # osobny bucket (aktualny sezon)
 
 
 # ----------------------------------------------------------------------
-# 1. POBRANIE DANYCH (roczniki + trwające turnieje)
+# 1. POBRANIE DANYCH
 # ----------------------------------------------------------------------
 def download_years(years):
     frames = []
-    
-    # Pobieranie danych z poszczególnych lat
     for year in years:
         url = DATA_BASE_URL.format(year=year)
         print(f"Pobieram {url} ...")
@@ -52,30 +48,13 @@ def download_years(years):
         try:
             with urllib.request.urlopen(req) as resp:
                 raw_bytes = resp.read()
-            df = pd.read_csv(io.BytesIO(raw_bytes), low_memory=False)
-            df["season"] = year
-            frames.append(df)
-            print(f"  Wczytano {year}.csv: {len(df)} meczow")
         except Exception as e:
             print(f"  UWAGA: nie udalo sie pobrac {year}.csv ({e}), pomijam.")
             continue
-
-    # Pobieranie danych z trwających turniejów (ongoing_tourneys.csv)
-    print(f"Pobieram {ONGOING_URL} ...")
-    req_ongoing = urllib.request.Request(ONGOING_URL, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req_ongoing) as resp:
-            raw_bytes = resp.read()
-        df_ongoing = pd.read_csv(io.BytesIO(raw_bytes), low_memory=False)
-        if not df_ongoing.empty:
-            df_ongoing["season"] = YEAR_CURRENT
-            frames.append(df_ongoing)
-            print(f"  Wczytano ongoing_tourneys.csv: {len(df_ongoing)} meczow")
-    except Exception as e:
-        print(f"  UWAGA: nie udalo sie pobrac ongoing_tourneys.csv ({e}), pomijam.")
-
-    if not frames:
-        raise SystemExit("BLAD: Nie udalo sie pobrac zadnych danych meczowych.")
+        df = pd.read_csv(io.BytesIO(raw_bytes), low_memory=False)
+        df["season"] = year
+        frames.append(df)
+        print(f"  Wczytano {year}.csv: {len(df)} meczow")
 
     return pd.concat(frames, ignore_index=True)
 
@@ -221,9 +200,9 @@ def compute_match_aces_stats(matches):
     rows = []
     for _, r in m.iterrows():
         rows.append({"player_name": r["winner_name"], "surface": r["surface"],
-                      "best_of": int(r["best_of"]), "aces": r["w_ace"]})
+                     "best_of": int(r["best_of"]), "aces": r["w_ace"]})
         rows.append({"player_name": r["loser_name"], "surface": r["surface"],
-                      "best_of": int(r["best_of"]), "aces": r["l_ace"]})
+                     "best_of": int(r["best_of"]), "aces": r["l_ace"]})
 
     df = pd.DataFrame(rows)
     agg = df.groupby(["player_name", "surface", "best_of"])["aces"].agg(["mean", "var", "count"]).reset_index()
@@ -261,11 +240,16 @@ def main():
         html = f.read()
 
     def replace_block(html, var_name, new_value_json):
+        # tolerancyjne dopasowanie na wypadek roznic w bialych znakach
+        # (np. po edycji pliku przez edytor w przegladarce, ktory czasem
+        # zniekształca bardzo dlugie linie)
         match = re.search(r"var\s+" + re.escape(var_name) + r"\s*=\s*", html)
         if not match:
             raise SystemExit(
                 f"\nBLAD: nie znaleziono deklaracji 'var {var_name} = ' w pliku {TEMPLATE_FILE}.\n"
-                f"To zwykle oznacza, ze plik zostal uszkodzony/zmieniony.\n"
+                f"To zwykle oznacza, ze plik zostal uszkodzony/zmieniony (np. przez edytor GitHuba\n"
+                f"w przegladarce przy bardzo dlugich liniach). Wgraj poprawny plik ponownie przez\n"
+                f"'Add file -> Upload files' zamiast edycji online, i uruchom workflow jeszcze raz."
             )
         start = match.start()
         marker = match.group(0)
