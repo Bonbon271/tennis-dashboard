@@ -476,6 +476,45 @@
   .cmp-expected-val { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px; color: var(--accent); }
   .cmp-note { font-size: 11px; color: var(--chalk-faint); margin-top: 14px; line-height: 1.65; }
 
+  /* ---------- fatigue panel ---------- */
+  .fatigue-box {
+    display: flex;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-top: 16px;
+  }
+  .fatigue-cols { display: flex; gap: 24px; width: 100%; }
+  .fatigue-col { flex: 1; }
+  .fatigue-col .name { font-size: 12px; color: var(--chalk); font-weight: 600; margin-bottom: 6px; }
+  .fatigue-row { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--chalk-dim); padding: 3px 0; }
+  .fatigue-row b { color: var(--chalk); font-family: 'JetBrains Mono', monospace; }
+  .fatigue-flag {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    background: rgba(226,114,107,0.15);
+    color: var(--leak, #E2726B);
+  }
+  .fatigue-divider { width: 1px; background: var(--border); }
+
+  /* ---------- double faults section ---------- */
+  .df-section {
+    margin-top: 22px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .df-title {
+    font-family: 'Oswald', sans-serif;
+    font-size: 14.5px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+
   /* ================= bookmaker odds ================= */
   .bk-section { margin-top: 26px; padding-top: 22px; border-top: 1px dashed var(--border-dash); }
   .bk-title { font-family: 'Barlow Condensed', sans-serif; font-size: 17px; font-weight: 600; text-transform: uppercase; margin-bottom: 14px; }
@@ -714,6 +753,17 @@
       </div>
 
       <div id="cmp-result"></div>
+
+      <div id="cmp-fatigue"></div>
+
+      <div class="df-section">
+        <div class="df-title">Total podwojnych bledow</div>
+        <div class="line-row">
+          <span class="line-label">Linia bukmacherska (total DF w meczu)</span>
+          <input type="number" id="cmp-df-line" class="line-input" step="0.5" placeholder="np. 6.5">
+        </div>
+        <div id="cmp-df-result"></div>
+      </div>
 
       <div class="bk-section">
         <div class="bk-title">Porownanie kursow bukmacherow (opcjonalnie)</div>
@@ -1043,6 +1093,47 @@
   ============================================================ */
   var cmpState = { surface: "Hard", bestOf: 3, bookmakers: [] };
 
+  var _datasetLatestDateCache = null;
+  function getDatasetLatestDate() {
+    if (_datasetLatestDateCache) return _datasetLatestDateCache;
+    var maxDate = "0000-00-00";
+    for (var i = 0; i < H2H_DATA.length; i++) {
+      if (H2H_DATA[i].date > maxDate) maxDate = H2H_DATA[i].date;
+    }
+    _datasetLatestDateCache = maxDate;
+    return maxDate;
+  }
+
+  function daysBetween(dateStrA, dateStrB) {
+    var a = new Date(dateStrA + "T00:00:00Z");
+    var b = new Date(dateStrB + "T00:00:00Z");
+    return Math.round((a - b) / 86400000);
+  }
+
+  function fatigueInfo(exactName) {
+    var matches = H2H_DATA.filter(function(m) { return m.winner === exactName || m.loser === exactName; });
+    if (matches.length === 0) return null;
+    var lastMatch = matches[0];
+    var latestDatasetDate = getDatasetLatestDate();
+    var daysSinceLastMatch = daysBetween(latestDatasetDate, lastMatch.date);
+    var cutoff14 = new Date(latestDatasetDate + "T00:00:00Z");
+    cutoff14.setUTCDate(cutoff14.getUTCDate() - 14);
+    var cutoff14Str = cutoff14.toISOString().slice(0, 10);
+    var matchesLast14 = matches.filter(function(m) { return m.date >= cutoff14Str; }).length;
+    var lastOpponent = lastMatch.winner === exactName ? lastMatch.loser : lastMatch.winner;
+    return { daysSinceLastMatch: daysSinceLastMatch, matchesLast14: matchesLast14, lastOpponent: lastOpponent, lastDate: lastMatch.date };
+  }
+
+  function matchDfStats(exactName, surface) {
+    var matches = H2H_DATA.filter(function(m) { return m.surface === surface && (m.winner === exactName || m.loser === exactName); });
+    var values = matches.map(function(m) { return m.winner === exactName ? m.w_dfs : m.l_dfs; }).filter(function(v) { return v != null; });
+    if (values.length < 3) return null;
+    var mean = values.reduce(function(s, v) { return s + v; }, 0) / values.length;
+    var variance = values.reduce(function(s, v) { return s + (v - mean) * (v - mean); }, 0) / values.length;
+    if (variance === 0) variance = mean > 0 ? mean : 0.5;
+    return { mean: mean, variance: variance, n: values.length };
+  }
+
   function recentAcesAvg(exactName) {
     var matches = H2H_DATA.filter(function(m) { return m.winner === exactName || m.loser === exactName; });
     // H2H_DATA jest juz posortowane malejaco po dacie przy eksporcie
@@ -1153,6 +1244,75 @@
     return { mean: totalMean, sd: totalSd, fallback: fallback, fallbackNames: fallbackNames };
   }
 
+  function renderFatiguePanel(s1, s2) {
+    var f1 = fatigueInfo(s1.name);
+    var f2 = fatigueInfo(s2.name);
+    if (!f1 && !f2) return '';
+
+    function colHtml(name, f) {
+      if (!f) return '<div class="fatigue-col"><div class="name">' + name + '</div><div class="fatigue-row">brak danych</div></div>';
+      var heavyLoadFlag = f.matchesLast14 >= 4 ? '<span class="fatigue-flag">duze obciazenie</span>' : '';
+      var longBreakFlag = f.daysSinceLastMatch > 21 ? '<span class="fatigue-flag">dluga przerwa</span>' : '';
+      return '' +
+        '<div class="fatigue-col">' +
+          '<div class="name">' + name + longBreakFlag + heavyLoadFlag + '</div>' +
+          '<div class="fatigue-row"><span>Dni od ostatniego meczu</span><b>' + f.daysSinceLastMatch + '</b></div>' +
+          '<div class="fatigue-row"><span>Meczow w ostatnich 14 dniach</span><b>' + f.matchesLast14 + '</b></div>' +
+          '<div class="fatigue-row"><span>Ostatni przeciwnik</span><b>' + f.lastOpponent + '</b></div>' +
+        '</div>';
+    }
+
+    return '' +
+      '<div class="fatigue-box">' +
+        '<div class="fatigue-cols">' +
+          colHtml(s1.name, f1) +
+          '<div class="fatigue-divider"></div>' +
+          colHtml(s2.name, f2) +
+        '</div>' +
+      '</div>' +
+      '<div class="cmp-note">Zmeczenie/obciazenie to informacja kontekstowa (dane wzgledem ostatniego meczu w bazie), NIE jest wliczone do obliczen prawdopodobienstwa ponizej &mdash; oceniasz to sam.</div>';
+  }
+
+  function renderDfPrediction(s1, s2, surface) {
+    var resultEl = document.getElementById('cmp-df-result');
+    var lineInput = document.getElementById('cmp-df-line');
+    var line = parseFloat(lineInput.value);
+
+    var d1 = matchDfStats(s1.name, surface);
+    var d2 = matchDfStats(s2.name, surface);
+
+    if (!d1 || !d2) {
+      resultEl.innerHTML = '<div class="h2h-hint">Za malo danych o podwojnych bledach dla jednego z zawodnikow na nawierzchni ' + surface + '.</div>';
+      return;
+    }
+
+    var totalMean = d1.mean + d2.mean;
+    var totalVar = Math.max(d1.variance + d2.variance, 0.01);
+    var totalSd = Math.sqrt(totalVar);
+
+    if (isNaN(line)) {
+      resultEl.innerHTML = '<div class="h2h-hint">Wpisz linie DF, zeby zobaczyc prawdopodobienstwo.<br><br>Oczekiwany total podwojnych bledow (' + surface + '): <b style="color:var(--chalk)">~' + totalMean.toFixed(1) + '</b></div>';
+      return;
+    }
+
+    var pUnder = normCdf((line - totalMean) / totalSd);
+    var pOver = 1 - pUnder;
+    var pUnderPct = (pUnder * 100).toFixed(1);
+    var pOverPct = (pOver * 100).toFixed(1);
+
+    resultEl.innerHTML = '' +
+      '<div class="prob-card">' +
+        '<div class="prob-title">Prognoza: total DF ' + line.toFixed(1) + ' &mdash; ' + s1.name + ' vs ' + s2.name + '</div>' +
+        '<div class="prob-expected">Oczekiwany total (model): ~' + totalMean.toFixed(1) + ' DF &plusmn; ' + totalSd.toFixed(1) + ' odch. std.</div>' +
+        '<div class="prob-bar-track">' +
+          '<div class="prob-bar-seg under" style="width:' + pUnderPct + '%">' + (pUnder > 0.12 ? pUnderPct + '%' : '') + '</div>' +
+          '<div class="prob-bar-seg over" style="width:' + pOverPct + '%">' + (pOver > 0.12 ? pOverPct + '%' : '') + '</div>' +
+        '</div>' +
+        '<div class="prob-legend"><span>UNDER ' + line.toFixed(1) + ' &mdash; ' + pUnderPct + '%</span><span>OVER ' + line.toFixed(1) + ' &mdash; ' + pOverPct + '%</span></div>' +
+        '<div class="cmp-note">Model liczony jako suma sredniej i wariancji podwojnych bledow obu graczy na tej nawierzchni (bez korekty o przeciwnika &mdash; DF to w wiekszosci wlasny blad serwujacego, nie efekt jakosci returnu). Przyblizenie rozkladem normalnym.</div>' +
+      '</div>';
+  }
+
   function renderLinePrediction(s1, s2, surface, bestOf) {
     var lineInput = document.getElementById('cmp-line');
     var line = parseFloat(lineInput.value);
@@ -1199,6 +1359,8 @@
 
     if (name1.length < 3 || name2.length < 3) {
       resultEl.innerHTML = '<div class="h2h-hint">Wpisz fragment nazwiska obu zawodnikow (min. 3 znaki), np. "Fritz" i "Bergs".</div>';
+      document.getElementById('cmp-fatigue').innerHTML = '';
+      document.getElementById('cmp-df-result').innerHTML = '';
       return;
     }
 
@@ -1208,6 +1370,8 @@
     if (!s1 || !s2) {
       var missing = !s1 ? name1 : name2;
       resultEl.innerHTML = '<div class="h2h-hint">Brak danych dla "' + missing + '" na nawierzchni ' + cmpState.surface + ' (za mala liczba meczow w bazie lub zla pisownia).</div>';
+      document.getElementById('cmp-fatigue').innerHTML = '';
+      document.getElementById('cmp-df-result').innerHTML = '';
       return;
     }
 
@@ -1273,12 +1437,22 @@
       '</div>' +
       renderLinePrediction(s1, s2, cmpState.surface, cmpState.bestOf);
 
+    document.getElementById('cmp-fatigue').innerHTML = renderFatiguePanel(s1, s2);
+    renderDfPrediction(s1, s2, cmpState.surface);
+
     if (typeof renderBookmakers === 'function') renderBookmakers();
   }
 
   document.getElementById('cmp-p1').addEventListener('input', renderCompare);
   document.getElementById('cmp-p2').addEventListener('input', renderCompare);
   document.getElementById('cmp-line').addEventListener('input', renderCompare);
+  document.getElementById('cmp-df-line').addEventListener('input', function() {
+    var name1 = document.getElementById('cmp-p1').value.trim();
+    var name2 = document.getElementById('cmp-p2').value.trim();
+    var s1 = combinedStats(name1, cmpState.surface);
+    var s2 = combinedStats(name2, cmpState.surface);
+    if (s1 && s2) renderDfPrediction(s1, s2, cmpState.surface);
+  });
   document.getElementById('cmp-surface-pills').addEventListener('click', function(e) {
     var pill = e.target.closest('.pill'); if (!pill) return;
     document.querySelectorAll('#cmp-surface-pills .pill').forEach(function(p) { p.classList.remove('active'); });
