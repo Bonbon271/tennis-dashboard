@@ -1,37 +1,36 @@
 name: Daily refresh
- 
+
 on:
   schedule:
     # 05:00 UTC = 06:00 lub 07:00 czasu polskiego (zalezy od czasu letniego/zimowego)
     - cron: "0 5 * * *"
   workflow_dispatch: {}   # pozwala tez uruchomic recznie z zakladki Actions
- 
+
 permissions:
   contents: write
- 
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
- 
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
- 
+
       - name: Install dependencies
         run: pip install pandas
- 
+
       - name: Refresh dashboard data
         run: python refresh_data.py
- 
+
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add tennis_stats_dashboard.html
+          git add index.html
           git diff --staged --quiet || git commit -m "Auto-refresh danych ($(date -u +%Y-%m-%d))"
           git push
- 
