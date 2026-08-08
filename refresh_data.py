@@ -242,11 +242,20 @@ def main():
         html = f.read()
 
     def replace_block(html, var_name, new_value_json):
-        marker = f"var {var_name} = "
-        start = html.index(marker)
-        # koniec bloku = pierwszy ';' na tym samym "poziomie" - dane sa jednoliniowe JSON-em,
-        # wiec pierwszy ';' po starcie to koniec przypisania
-        end = html.index(";", start + len(marker)) + 1
+        # tolerancyjne dopasowanie na wypadek roznic w bialych znakach
+        # (np. po edycji pliku przez edytor w przegladarce, ktory czasem
+        # zniekształca bardzo dlugie linie)
+        match = re.search(r"var\s+" + re.escape(var_name) + r"\s*=\s*", html)
+        if not match:
+            raise SystemExit(
+                f"\nBLAD: nie znaleziono deklaracji 'var {var_name} = ' w pliku {TEMPLATE_FILE}.\n"
+                f"To zwykle oznacza, ze plik zostal uszkodzony/zmieniony (np. przez edytor GitHuba\n"
+                f"w przegladarce przy bardzo dlugich liniach). Wgraj poprawny plik ponownie przez\n"
+                f"'Add file -> Upload files' zamiast edycji online, i uruchom workflow jeszcze raz."
+            )
+        start = match.start()
+        marker = match.group(0)
+        end = html.index(";", match.end()) + 1
         return html[:start] + marker + new_value_json + ";" + html[end:]
 
     html = replace_block(html, "ACE_DATA", json.dumps(ace_data, ensure_ascii=False, separators=(",", ":")))
