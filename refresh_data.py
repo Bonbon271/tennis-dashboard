@@ -25,6 +25,7 @@ przed uzyciem komercyjnym warto to wyjasnic bezposrednio z autorami
 import io
 import json
 import math
+import os
 import re
 import urllib.request
 
@@ -33,6 +34,8 @@ import pandas as pd
 TEMPLATE_FILE = "index.html"
 OUTPUT_FILE = "index.html"
 DATA_BASE_URL = "https://stats.tennismylife.org/data/{year}.csv"
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
+RAPIDAPI_HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
 ONGOING_URL = "https://stats.tennismylife.org/data/ongoing_tourneys.csv"
 YEARS_HISTORICAL = [2023, 2024, 2025]  # traktowane jako jeden bucket "2023-2025"
 YEAR_CURRENT = 2026                    # osobny bucket (aktualny sezon)
@@ -43,7 +46,7 @@ YEAR_CURRENT = 2026                    # osobny bucket (aktualny sezon)
 # ----------------------------------------------------------------------
 def download_years(years):
     frames = []
-    
+
     # Pobieranie danych z poszczególnych lat
     for year in years:
         url = DATA_BASE_URL.format(year=year)
@@ -78,6 +81,81 @@ def download_years(years):
         raise SystemExit("BLAD: Nie udalo sie pobrac zadnych danych meczowych.")
 
     return pd.concat(frames, ignore_index=True)
+
+
+# ----------------------------------------------------------------------
+# 1b. TERMINARZ NADCHODZACYCH MECZOW (Tennis API - RapidAPI)
+# ----------------------------------------------------------------------
+def fetch_upcoming_fixtures(days_ahead=7):
+    """
+    Pobiera nadchodzace mecze ATP na najblizsze dni.
+    Zwraca liste znormalizowanych slownikow: date, tournament, round, surface,
+    player1, player2.
+
+    UWAGA: nie moglem przetestowac tego wywolania z mojego srodowiska (domena
+    RapidAPI jest poza dostepna mi siecia) - napisane defensywnie na podstawie
+    dokumentacji. Jesli struktura JSON okaze sie inna niz zakladana, ta funkcja
+    wypisze surowa probke do logu, zeby latwo bylo poprawic mapowanie pol.
+    """
+    if not RAPIDAPI_KEY:
+        print("  UWAGA: brak RAPIDAPI_KEY w zmiennych srodowiskowych - pomijam terminarz.")
+        return []
+
+    from datetime import date, timedelta
+    today = date.today()
+    end = today + timedelta(days=days_ahead)
+    url = (f"https://{RAPIDAPI_HOST}/tennis/v2/atp/fixtures/"
+           f"{today.isoformat()}/{end.isoformat()}?include=round,tournament.court")
+
+    req = urllib.request.Request(url, headers={
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = json.loads(resp.read())
+    except Exception as e:
+        print(f"  UWAGA: nie udalo sie pobrac terminarza ({e}), pomijam.")
+        return []
+
+    items = raw.get("data", raw) if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        print("  UWAGA: nieoczekiwana struktura odpowiedzi terminarza:", str(raw)[:500])
+        return []
+
+    print(f"  Surowa probka pierwszego meczu (do weryfikacji mapowania pol): {json.dumps(items[0], ensure_ascii=False)[:600]}" if items else "  Brak nadchodzacych meczow w odpowiedzi.")
+
+    def get_name(item, key):
+        val = item.get(key) or item.get(key + "_name") or item.get(key + "_id")
+        if isinstance(val, dict):
+            return val.get("name") or val.get("full_name") or str(val)
+        return val
+
+    def get_nested(item, path, default=None):
+        cur = item
+        for p in path:
+            if not isinstance(cur, dict):
+                return default
+            cur = cur.get(p)
+        return cur if cur is not None else default
+
+    fixtures = []
+    for it in items:
+        try:
+            fixtures.append({
+                "date": it.get("date") or it.get("scheduled") or it.get("start_date") or "",
+                "tournament": get_nested(it, ["tournament", "name"]) or it.get("tournament_name") or it.get("tournament") or "",
+                "round": get_nested(it, ["round", "name"]) or it.get("round_name") or it.get("round") or "",
+                "surface": get_nested(it, ["tournament", "court", "name"]) or it.get("surface") or "",
+                "player1": get_name(it, "player1") or "",
+                "player2": get_name(it, "player2") or "",
+            })
+        except Exception:
+            continue
+
+    fixtures = [f for f in fixtures if f["player1"] and f["player2"]]
+    print(f"  Sparsowano {len(fixtures)} nadchodzacych meczow.")
+    return fixtures
 
 
 # ----------------------------------------------------------------------
@@ -241,11 +319,10 @@ def compute_match_aces_stats(matches):
 # ----------------------------------------------------------------------
 def main():
     all_matches = download_years(YEARS_HISTORICAL + [YEAR_CURRENT])
-    historical = all_matches[all_matches["season"].isin(YEARS_HISTORICAL)]
     current = all_matches[all_matches["season"] == YEAR_CURRENT]
 
     print("\nLiczenie wspolczynnika asowalnosci...")
-    ace_data = compute_ace_data(historical, "2023-2025") + compute_ace_data(current, "2026")
+    ace_data = compute_ace_data(all_matches, "2023-2026") + compute_ace_data(current, "2026")
 
     print("Liczenie danych H2H...")
     h2h_data = compute_h2h_data(all_matches)
@@ -255,6 +332,9 @@ def main():
 
     print("Liczenie sredniej/wariancji asow na mecz...")
     match_aces_stats = compute_match_aces_stats(all_matches)
+
+    print("Pobieram terminarz nadchodzacych meczow...")
+    upcoming_matches = fetch_upcoming_fixtures(days_ahead=7)
 
     print(f"\nWczytuje szablon: {TEMPLATE_FILE}")
     with open(TEMPLATE_FILE, encoding="utf-8") as f:
@@ -276,6 +356,7 @@ def main():
     html = replace_block(html, "H2H_DATA", json.dumps(h2h_data, ensure_ascii=False, separators=(",", ":")))
     html = replace_block(html, "EXTRA_STATS", json.dumps(extra_stats, ensure_ascii=False, separators=(",", ":")))
     html = replace_block(html, "MATCH_ACES_STATS", json.dumps(match_aces_stats, ensure_ascii=False, separators=(",", ":")))
+    html = replace_block(html, "UPCOMING_MATCHES", json.dumps(upcoming_matches, ensure_ascii=False, separators=(",", ":")))
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
