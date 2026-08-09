@@ -27,6 +27,7 @@ import json
 import math
 import os
 import re
+import urllib.error
 import urllib.request
 
 import pandas as pd
@@ -107,10 +108,20 @@ def fetch_upcoming_fixtures(days_ahead=7):
         "Content-Type": "application/json",
         "x-rapidapi-key": RAPIDAPI_KEY,
         "x-rapidapi-host": RAPIDAPI_HOST,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Accept": "application/json",
     })
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             raw = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            pass
+        print(f"  UWAGA: nie udalo sie pobrac terminarza (HTTP {e.code}: {e.reason}). Tresc odpowiedzi: {body}")
+        return []
     except Exception as e:
         print(f"  UWAGA: nie udalo sie pobrac terminarza ({e}), pomijam.")
         return []
