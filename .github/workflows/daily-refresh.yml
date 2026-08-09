@@ -25,6 +25,8 @@ jobs:
         run: pip install pandas
 
       - name: Refresh dashboard data
+        env:
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
         run: python refresh_data.py
 
       - name: Commit and push if changed
