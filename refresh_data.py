@@ -88,16 +88,14 @@ def download_years(years):
 # ----------------------------------------------------------------------
 def fetch_upcoming_fixtures(days_ahead=7):
     """
-    Pobiera nadchodzace mecze ATP.
+    Pobiera nadchodzace mecze ATP (singiel - mecze deblowe i niekompletne
+    rekordy sa odfiltrowywane).
     Zwraca liste znormalizowanych slownikow: date, tournament, round, surface,
     player1, player2.
 
-    UWAGA: nie moglem przetestowac tego wywolania z mojego srodowiska (domena
-    RapidAPI jest poza dostepna mi siecia) - endpoint zweryfikowany na podstawie
-    panelu testowego RapidAPI (widocznego bezposrednio w koncie uzytkownika),
-    NIE oficjalnej dokumentacji zewnetrznej, ktora okazala sie nieaktualna/inna.
-    Ta funkcja wypisuje surowa probke do logu, zeby latwo bylo poprawic
-    mapowanie pol, jesli struktura JSON dalej sie nie zgadza.
+    Struktura odpowiedzi API zweryfikowana na zywo (200 OK, prawdziwa probka
+    JSON) - format: {"total": N, "matches": [{tournament:{name,court:{name}},
+    court, roundId, date, player1:{name,...}, player2:{name,...}, ...}]}.
     """
     if not RAPIDAPI_KEY:
         print("  UWAGA: brak RAPIDAPI_KEY w zmiennych srodowiskowych - pomijam terminarz.")
@@ -117,49 +115,42 @@ def fetch_upcoming_fixtures(days_ahead=7):
         print(f"  UWAGA: nie udalo sie pobrac terminarza ({e}), pomijam.")
         return []
 
-    items = raw.get("data") if isinstance(raw, dict) and "data" in raw else raw
-    if isinstance(items, dict):
-        items = items.get("matches") or items.get("result") or items.get("upcoming") or []
-    if not isinstance(items, list):
-        print("  UWAGA: nieoczekiwana struktura odpowiedzi terminarza:", str(raw)[:800])
-        return []
-
-    print(f"  Surowa probka pierwszego meczu (do weryfikacji mapowania pol): {json.dumps(items[0], ensure_ascii=False)[:800]}" if items else "  Brak nadchodzacych meczow w odpowiedzi.")
-
-    def get_name(item, *keys):
-        for key in keys:
-            val = item.get(key)
-            if val is None:
-                continue
-            if isinstance(val, dict):
-                return val.get("name") or val.get("full_name") or val.get("fullName") or str(val)
-            return val
-        return None
-
-    def get_nested(item, path, default=None):
-        cur = item
-        for p in path:
-            if not isinstance(cur, dict):
-                return default
-            cur = cur.get(p)
-        return cur if cur is not None else default
+    items = raw.get("matches", []) if isinstance(raw, dict) else []
+    print(f"  Otrzymano {len(items)} pozycji z API (zadeklarowane total: {raw.get('total') if isinstance(raw, dict) else '?'})")
 
     fixtures = []
     for it in items:
         try:
+            p1 = it.get("player1") or {}
+            p2 = it.get("player2") or {}
+            p1_name = p1.get("name") or ""
+            p2_name = p2.get("name") or ""
+
+            # odrzucamy debel (nazwa zawiera "/") i niekompletne/smieciowe rekordy
+            if "/" in p1_name or "/" in p2_name:
+                continue
+            if not p1_name or not p2_name or "Unknown" in p1_name or "Unknown" in p2_name:
+                continue
+
+            date_raw = it.get("date")
+            date_str = date_raw.split("T")[0] if date_raw else ""
+
+            tournament = it.get("tournament") or {}
+            surface = it.get("court") or (tournament.get("court") or {}).get("name") or ""
+            round_id = it.get("roundId")
+
             fixtures.append({
-                "date": it.get("date") or it.get("scheduled") or it.get("start_date") or it.get("startDate") or it.get("match_date") or "",
-                "tournament": get_nested(it, ["tournament", "name"]) or it.get("tournament_name") or it.get("tournamentName") or it.get("tournament") or it.get("event_name") or "",
-                "round": get_nested(it, ["round", "name"]) or it.get("round_name") or it.get("roundName") or it.get("round") or "",
-                "surface": get_nested(it, ["tournament", "court", "name"]) or get_nested(it, ["tournament", "surface"]) or it.get("surface") or it.get("court") or "",
-                "player1": get_name(it, "player1", "playerOne", "home_player", "homePlayer", "player_1") or "",
-                "player2": get_name(it, "player2", "playerTwo", "away_player", "awayPlayer", "player_2") or "",
+                "date": date_str,
+                "tournament": tournament.get("name") or "",
+                "round": f"Runda #{round_id}" if round_id else "",
+                "surface": surface,
+                "player1": p1_name,
+                "player2": p2_name,
             })
         except Exception:
             continue
 
-    fixtures = [f for f in fixtures if f["player1"] and f["player2"]]
-    print(f"  Sparsowano {len(fixtures)} nadchodzacych meczow.")
+    print(f"  Sparsowano {len(fixtures)} nadchodzacych meczow singla (odfiltrowano debel/niekompletne rekordy).")
     return fixtures
 
 
