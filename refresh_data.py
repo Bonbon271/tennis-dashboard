@@ -88,28 +88,27 @@ def download_years(years):
 # ----------------------------------------------------------------------
 def fetch_upcoming_fixtures(days_ahead=7):
     """
-    Pobiera nadchodzace mecze ATP na najblizsze dni.
+    Pobiera nadchodzace mecze ATP.
     Zwraca liste znormalizowanych slownikow: date, tournament, round, surface,
     player1, player2.
 
     UWAGA: nie moglem przetestowac tego wywolania z mojego srodowiska (domena
-    RapidAPI jest poza dostepna mi siecia) - napisane defensywnie na podstawie
-    dokumentacji. Jesli struktura JSON okaze sie inna niz zakladana, ta funkcja
-    wypisze surowa probke do logu, zeby latwo bylo poprawic mapowanie pol.
+    RapidAPI jest poza dostepna mi siecia) - endpoint zweryfikowany na podstawie
+    panelu testowego RapidAPI (widocznego bezposrednio w koncie uzytkownika),
+    NIE oficjalnej dokumentacji zewnetrznej, ktora okazala sie nieaktualna/inna.
+    Ta funkcja wypisuje surowa probke do logu, zeby latwo bylo poprawic
+    mapowanie pol, jesli struktura JSON dalej sie nie zgadza.
     """
     if not RAPIDAPI_KEY:
         print("  UWAGA: brak RAPIDAPI_KEY w zmiennych srodowiskowych - pomijam terminarz.")
         return []
 
-    from datetime import date, timedelta
-    today = date.today()
-    end = today + timedelta(days=days_ahead)
-    url = (f"https://{RAPIDAPI_HOST}/tennis/v2/atp/fixtures/"
-           f"{today.isoformat()}/{end.isoformat()}?include=round,tournament.court")
+    url = f"https://{RAPIDAPI_HOST}/tennis/v2/ms-api/upcoming/matches/atp"
 
     req = urllib.request.Request(url, headers={
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
+        "Content-Type": "application/json",
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": RAPIDAPI_HOST,
     })
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -118,18 +117,24 @@ def fetch_upcoming_fixtures(days_ahead=7):
         print(f"  UWAGA: nie udalo sie pobrac terminarza ({e}), pomijam.")
         return []
 
-    items = raw.get("data", raw) if isinstance(raw, dict) else raw
+    items = raw.get("data") if isinstance(raw, dict) and "data" in raw else raw
+    if isinstance(items, dict):
+        items = items.get("matches") or items.get("result") or items.get("upcoming") or []
     if not isinstance(items, list):
-        print("  UWAGA: nieoczekiwana struktura odpowiedzi terminarza:", str(raw)[:500])
+        print("  UWAGA: nieoczekiwana struktura odpowiedzi terminarza:", str(raw)[:800])
         return []
 
-    print(f"  Surowa probka pierwszego meczu (do weryfikacji mapowania pol): {json.dumps(items[0], ensure_ascii=False)[:600]}" if items else "  Brak nadchodzacych meczow w odpowiedzi.")
+    print(f"  Surowa probka pierwszego meczu (do weryfikacji mapowania pol): {json.dumps(items[0], ensure_ascii=False)[:800]}" if items else "  Brak nadchodzacych meczow w odpowiedzi.")
 
-    def get_name(item, key):
-        val = item.get(key) or item.get(key + "_name") or item.get(key + "_id")
-        if isinstance(val, dict):
-            return val.get("name") or val.get("full_name") or str(val)
-        return val
+    def get_name(item, *keys):
+        for key in keys:
+            val = item.get(key)
+            if val is None:
+                continue
+            if isinstance(val, dict):
+                return val.get("name") or val.get("full_name") or val.get("fullName") or str(val)
+            return val
+        return None
 
     def get_nested(item, path, default=None):
         cur = item
@@ -143,12 +148,12 @@ def fetch_upcoming_fixtures(days_ahead=7):
     for it in items:
         try:
             fixtures.append({
-                "date": it.get("date") or it.get("scheduled") or it.get("start_date") or "",
-                "tournament": get_nested(it, ["tournament", "name"]) or it.get("tournament_name") or it.get("tournament") or "",
-                "round": get_nested(it, ["round", "name"]) or it.get("round_name") or it.get("round") or "",
-                "surface": get_nested(it, ["tournament", "court", "name"]) or it.get("surface") or "",
-                "player1": get_name(it, "player1") or "",
-                "player2": get_name(it, "player2") or "",
+                "date": it.get("date") or it.get("scheduled") or it.get("start_date") or it.get("startDate") or it.get("match_date") or "",
+                "tournament": get_nested(it, ["tournament", "name"]) or it.get("tournament_name") or it.get("tournamentName") or it.get("tournament") or it.get("event_name") or "",
+                "round": get_nested(it, ["round", "name"]) or it.get("round_name") or it.get("roundName") or it.get("round") or "",
+                "surface": get_nested(it, ["tournament", "court", "name"]) or get_nested(it, ["tournament", "surface"]) or it.get("surface") or it.get("court") or "",
+                "player1": get_name(it, "player1", "playerOne", "home_player", "homePlayer", "player_1") or "",
+                "player2": get_name(it, "player2", "playerTwo", "away_player", "awayPlayer", "player_2") or "",
             })
         except Exception:
             continue
