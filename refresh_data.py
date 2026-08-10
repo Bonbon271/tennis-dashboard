@@ -153,10 +153,10 @@ def fetch_upcoming_fixtures(days_ahead=7):
             odds = it.get("odds") or {}
             k1 = odds.get("k1")  # kurs bukmacherski na zwyciestwo player1
             k2 = odds.get("k2")  # kurs bukmacherski na zwyciestwo player2
-            # UWAGA: znaczenie ponizszych pol NIE jest oficjalnie potwierdzone -
-            # najlepsza hipoteza na podstawie wzorca danych (total=2.5 typowe dla
-            # linii setow w bo3, ktb/ktm przypominaja "kurs total buyuk/kucuk" -
-            # total over/under). Jesli okaze sie bledne, latwo to wylaczyc.
+            # total/ktb/ktm = rynek "Total Sets" (potwierdzone przez porownanie
+            # z endpointem Get Pre Match Odds na rzeczywistych meczach - ta sama
+            # linia "2.5"/"2 Sets", zblizone kursy). Bukmacher: Bet365 (jedyny
+            # dostepny w tym API na podstawie testow).
             total_sets_line = odds.get("total")
             odds_over_sets = odds.get("ktb")
             odds_under_sets = odds.get("ktm")
