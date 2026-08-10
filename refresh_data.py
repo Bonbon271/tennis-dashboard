@@ -150,6 +150,17 @@ def fetch_upcoming_fixtures(days_ahead=7):
             surface = it.get("court") or (tournament.get("court") or {}).get("name") or ""
             round_id = it.get("roundId")
 
+            odds = it.get("odds") or {}
+            k1 = odds.get("k1")  # kurs bukmacherski na zwyciestwo player1
+            k2 = odds.get("k2")  # kurs bukmacherski na zwyciestwo player2
+            # UWAGA: znaczenie ponizszych pol NIE jest oficjalnie potwierdzone -
+            # najlepsza hipoteza na podstawie wzorca danych (total=2.5 typowe dla
+            # linii setow w bo3, ktb/ktm przypominaja "kurs total buyuk/kucuk" -
+            # total over/under). Jesli okaze sie bledne, latwo to wylaczyc.
+            total_sets_line = odds.get("total")
+            odds_over_sets = odds.get("ktb")
+            odds_under_sets = odds.get("ktm")
+
             fixtures.append({
                 "date": date_str,
                 "tournament": tournament.get("name") or "",
@@ -157,6 +168,12 @@ def fetch_upcoming_fixtures(days_ahead=7):
                 "surface": surface,
                 "player1": p1_name,
                 "player2": p2_name,
+                "odds_k1": k1,
+                "odds_k2": k2,
+                "h2h": it.get("h2h") or "",
+                "total_sets_line": total_sets_line,
+                "odds_over_sets": odds_over_sets,
+                "odds_under_sets": odds_under_sets,
             })
         except Exception:
             continue
